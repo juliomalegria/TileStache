@@ -219,10 +219,16 @@ class VectorResponse:
             float_pat = compile(r'^-?\d+\.\d+$')
     
             for atom in encoded:
+                atom_prefix = ''
+                if atom.startswith('['):
+                    atom_prefix = '['
+                    atom = atom[1:]
+                elif atom.startswith(', '):
+                    atom_prefix = ', '
+                    atom = atom[2:]
                 if float_pat.match(atom):
-                    out.write(('%%.%if' % self.precision) % float(atom))
-                else:
-                    out.write(atom)
+                    atom = ('%%.%if' % self.precision) % float(atom)
+                out.write(atom_prefix + atom)
         
         elif format in ('GeoBSON', 'ArcBSON'):
             import bson
