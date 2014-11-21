@@ -157,9 +157,9 @@ from re import compile
 from urlparse import urlparse, urljoin
 
 try:
-    from json import JSONEncoder, loads as json_loads
+    from json import JSONDecoder, dumps as json_dumps
 except ImportError:
-    from simplejson import JSONEncoder, loads as json_loads
+    from simplejson import JSONDecoder, dumps as json_dumps
 
 from osgeo import ogr, osr
 
@@ -176,10 +176,9 @@ class VectorResponse:
         - content: Vector data to be serialized, typically a dictionary.
         - verbose: Boolean flag to expand response for better legibility.
     """
-    def __init__(self, content, verbose, precision=6):
+    def __init__(self, content, verbose):
         self.content = content
         self.verbose = verbose
-        self.precision = precision
 
     def save(self, out, format):
         """
@@ -215,14 +214,8 @@ class VectorResponse:
         if format in ('GeoJSON', 'ArcJSON'):
             indent = self.verbose and 2 or None
             
-            encoded = JSONEncoder(indent=indent).iterencode(content)
-            float_pat = compile(r'^-?\d+\.\d+$')
-    
-            for atom in encoded:
-                if float_pat.match(atom):
-                    out.write(('%%.%if' % self.precision) % float(atom))
-                else:
-                    out.write(atom)
+            encoded = json_dumps(content, indent=indent)
+            out.write(encoded)
         
         elif format in ('GeoBSON', 'ArcBSON'):
             import bson
@@ -460,7 +453,7 @@ def _open_layer(driver_name, parameters, dirpath):
     #
     return layer, datasource
 
-def _get_features(coord, properties, projection, layer, clipped, projected, spacing, id_property):
+def _get_features(coord, properties, projection, layer, clipped, projected, spacing, id_property, precision=6):
     """ Return a list of features in an OGR layer with properties in GeoJSON form.
     
         Optionally clip features to coordinate bounding box, and optionally
@@ -481,7 +474,7 @@ def _get_features(coord, properties, projection, layer, clipped, projected, spac
     #
     definition = layer.GetLayerDefn()
     layer_sref = layer.GetSpatialRef()
-    if layer_sref == None:
+    if layer_sref is None:
         layer_sref = _sref_4326()
     
     #
@@ -523,7 +516,10 @@ def _get_features(coord, properties, projection, layer, clipped, projected, spac
         geometry.AssignSpatialReference(layer_sref)
         geometry.TransformTo(output_sref)
 
-        geom = json_loads(geometry.ExportToJson())
+        float_with_precision = lambda f: round(float(f), precision)
+        decoder = JSONDecoder(parse_float=float_with_precision)
+
+        geom = decoder.decode(geometry.ExportToJson())
         prop = _feature_properties(feature, definition, properties)
 
         geojson_feature = {'type': 'Feature', 'properties': prop, 'geometry': geom}
@@ -581,7 +577,7 @@ class Provider:
         """ Render a single tile, return a VectorResponse instance.
         """
         layer, ds = _open_layer(self.driver, self.parameters, self.layer.config.dirpath)
-        features = _get_features(coord, self.properties, self.layer.projection, layer, self.clipped, self.projected, self.spacing, self.id_property)
+        features = _get_features(coord, self.properties, self.layer.projection, layer, self.clipped, self.projected, self.spacing, self.id_property, self.precision)
         response = {'type': 'FeatureCollection', 'features': features}
         
         if self.projected:
@@ -594,7 +590,7 @@ class Provider:
         else:
             response['crs'] = {'srid': 4326, 'wkid': 4326}
 
-        return VectorResponse(response, self.verbose, self.precision)
+        return VectorResponse(response, self.verbose)
         
     def getTypeByExtension(self, extension):
         """ Get mime-type and format by file extension.
